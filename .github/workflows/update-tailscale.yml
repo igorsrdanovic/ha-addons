@@ -1,0 +1,51 @@
+name: Update Tailscale
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get latest Tailscale version
+        id: tailscale
+        run: |
+          LATEST=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r .tag_name | sed 's/v//')
+          CURRENT=$(grep 'ARG TAILSCALE_VERSION=' tailscale/Dockerfile | cut -d'"' -f2)
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          
+      - name: Check if update needed
+        id: check
+        run: |
+          if [ "${{ steps.tailscale.outputs.latest }}" != "${{ steps.tailscale.outputs.current }}" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Update Dockerfile
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          sed -i "s/ARG TAILSCALE_VERSION=\".*\"/ARG TAILSCALE_VERSION=\"${{ steps.tailscale.outputs.latest }}\"/" tailscale/Dockerfile
+          
+      - name: Bump addon version
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          CURRENT_VERSION=$(grep '^version:' tailscale/config.yaml | awk '{print $2}' | tr -d '"')
+          NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
+          sed -i "s/version: \"$CURRENT_VERSION\"/version: \"$NEW_VERSION\"/" tailscale/config.yaml
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          
+      - name: Commit and push
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add tailscale/Dockerfile tailscale/config.yaml
+          git commit -m "Update Tailscale to ${{ steps.tailscale.outputs.latest }}"
+          git push
