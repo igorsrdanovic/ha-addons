@@ -14,28 +14,27 @@ jobs:
       - name: Sync Dockerfile from upstream
         id: sync
         run: |
-          # Add upstream remote
           git remote add upstream https://github.com/hassio-addons/addon-tailscale.git || true
           git fetch upstream
-          
-          # Copy upstream Dockerfile
           git show upstream/main:tailscale/Dockerfile > /tmp/upstream-dockerfile
           
-          # Check if different
           if ! diff -q tailscale/Dockerfile /tmp/upstream-dockerfile > /dev/null 2>&1; then
             cp /tmp/upstream-dockerfile tailscale/Dockerfile
             echo "dockerfile_changed=true" >> $GITHUB_OUTPUT
-            echo "Dockerfile synced from upstream"
           else
             echo "dockerfile_changed=false" >> $GITHUB_OUTPUT
-            echo "Dockerfile already up to date"
           fi
+          
+      - name: Remove package version pins
+        run: |
+          # Strip version pins to avoid Alpine package conflicts
+          sed -i 's/=.*-r[0-9]//g' tailscale/Dockerfile
           
       - name: Get latest Tailscale version
         id: tailscale
         run: |
           LATEST=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r .tag_name | sed 's/v//')
-          CURRENT=$(grep 'ARG TAILSCALE_VERSION=' tailscale/Dockerfile | cut -d'"' -f2)
+          CURRENT=$(grep 'ARG TAILSCALE_VERSION=' tailscale/Dockerfile | cut -d'"' -f2 | sed 's/v//')
           echo "latest=$LATEST" >> $GITHUB_OUTPUT
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           
@@ -53,8 +52,17 @@ jobs:
         run: |
           sed -i "s/ARG TAILSCALE_VERSION=\".*\"/ARG TAILSCALE_VERSION=\"${{ steps.tailscale.outputs.latest }}\"/" tailscale/Dockerfile
           
+      - name: Check if anything changed
+        id: changes
+        run: |
+          if git diff --quiet tailscale/Dockerfile tailscale/config.yaml; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+          
       - name: Bump addon version
-        if: steps.check.outputs.tailscale_update == 'true' || steps.sync.outputs.dockerfile_changed == 'true'
+        if: steps.changes.outputs.has_changes == 'true'
         run: |
           CURRENT_VERSION=$(grep '^version:' tailscale/config.yaml | awk '{print $2}')
           NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
@@ -62,19 +70,18 @@ jobs:
           echo "Version bumped from $CURRENT_VERSION to $NEW_VERSION"
           
       - name: Commit and push
-        if: steps.check.outputs.tailscale_update == 'true' || steps.sync.outputs.dockerfile_changed == 'true'
+        if: steps.changes.outputs.has_changes == 'true'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add tailscale/Dockerfile tailscale/config.yaml
           
-          # Create commit message
           if [ "${{ steps.check.outputs.tailscale_update }}" == "true" ] && [ "${{ steps.sync.outputs.dockerfile_changed }}" == "true" ]; then
             COMMIT_MSG="Update Tailscale to ${{ steps.tailscale.outputs.latest }} and sync Dockerfile from upstream"
           elif [ "${{ steps.check.outputs.tailscale_update }}" == "true" ]; then
             COMMIT_MSG="Update Tailscale to ${{ steps.tailscale.outputs.latest }}"
           else
-            COMMIT_MSG="Sync Dockerfile from upstream (package updates)"
+            COMMIT_MSG="Sync Dockerfile from upstream"
           fi
           
           git commit -m "$COMMIT_MSG"
