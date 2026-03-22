@@ -2,8 +2,8 @@ name: Update Tailscale
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight UTC
-  workflow_dispatch:  # Manual trigger
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   update:
@@ -27,7 +27,6 @@ jobs:
           
       - name: Remove package version pins
         run: |
-          # Strip version pins to avoid Alpine package conflicts
           sed -i 's/=.*-r[0-9]//g' tailscale/Dockerfile
           
       - name: Get latest Tailscale version
@@ -38,10 +37,24 @@ jobs:
           echo "latest=$LATEST" >> $GITHUB_OUTPUT
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           
+      - name: Verify binary exists
+        id: verify
+        run: |
+          VERSION="${{ steps.tailscale.outputs.latest }}"
+          
+          # Check if amd64 binary exists (most common architecture)
+          if curl --head --silent --fail "https://pkgs.tailscale.com/stable/tailscale_${VERSION}_amd64.tgz" > /dev/null 2>&1; then
+            echo "binary_exists=true" >> $GITHUB_OUTPUT
+            echo "Tailscale ${VERSION} binaries available"
+          else
+            echo "binary_exists=false" >> $GITHUB_OUTPUT
+            echo "Tailscale ${VERSION} binaries not yet published, staying on ${{ steps.tailscale.outputs.current }}"
+          fi
+          
       - name: Check if Tailscale update needed
         id: check
         run: |
-          if [ "${{ steps.tailscale.outputs.latest }}" != "${{ steps.tailscale.outputs.current }}" ]; then
+          if [ "${{ steps.tailscale.outputs.latest }}" != "${{ steps.tailscale.outputs.current }}" ] && [ "${{ steps.verify.outputs.binary_exists }}" == "true" ]; then
             echo "tailscale_update=true" >> $GITHUB_OUTPUT
           else
             echo "tailscale_update=false" >> $GITHUB_OUTPUT
