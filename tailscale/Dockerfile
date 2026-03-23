@@ -7,7 +7,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Setup base
 ARG BUILD_ARCH=amd64
-ARG TAILSCALE_VERSION="1.94.2"
+ARG TAILSCALE_VERSION="v1.96.2"
 RUN \
     apk add --no-cache \
         bind-tools \
@@ -26,7 +26,7 @@ RUN \
     && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="arm64"; fi \
     && if [ "${BUILD_ARCH}" = "amd64" ]; then ARCH="amd64"; fi \
     \
-    && curl -L -f --retry 3 \
+    && curl -L -s \
         "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION#v}_${ARCH}.tgz" \
         | tar zxvf - -C /opt/ --strip-components 1 \
     \
